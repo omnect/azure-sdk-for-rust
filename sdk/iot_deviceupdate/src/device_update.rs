@@ -183,8 +183,7 @@ impl DeviceUpdateClient {
 
         loop {
             sleep(Duration::from_secs(5)).await;
-            let mut uri = self.device_update_url.clone();
-            uri.set_path(&resp_body);
+            let uri = self.device_update_url.clone().join(&resp_body)?;
             debug!("Requesting operational status: {}", &uri);
             let update_operation: UpdateOperation = self.get(uri.to_string()).await?;
 
