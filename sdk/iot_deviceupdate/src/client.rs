@@ -117,18 +117,45 @@ impl DeviceUpdateClient {
     }
 
     pub(crate) async fn delete(&self, uri: String) -> azure_core::Result<String> {
-        let resp = reqwest::Client::new()
+        let mut req = reqwest::Client::new()
             .delete(&uri)
-            .bearer_auth(self.get_token().await?.token.secret())
-            .header("content-type", "application/json")
-            .send()
-            .await
-            .with_context(ErrorKind::Io, || {
-                format!("failed to send delete request. uri: {uri}")
-            })?;
-        let body = resp.text().await.with_context(ErrorKind::Io, || {
-            format!("failed to read response body text. uri: {uri}")
+            .bearer_auth(self.get_token().await?.token.secret());
+
+        req = req.header("content-type", "application/json");
+
+        let resp = req.send().await.with_context(ErrorKind::Io, || {
+            format!("failed to send request. uri: {uri}")
         })?;
-        Ok(body)
+
+        if resp.status() == 202u16 {
+            let headers = resp.headers();
+            return match headers.get("operation-location") {
+                Some(location) => location.to_str().map(ToString::to_string).context(
+                    ErrorKind::Other,
+                    "invalid characters in operation-location path",
+                ),
+                None => Err(Error::message(
+                    ErrorKind::Other,
+                    "successful import (202 status) but no operation-location header found",
+                )),
+            };
+        }
+
+        Err(Error::with_message(ErrorKind::Other, || {
+            format!("import unsuccessful, status: {}", resp.status())
+        }))
+        // let resp = reqwest::Client::new()
+        //     .delete(&uri)
+        //     .bearer_auth(self.get_token().await?.token.secret())
+        //     .header("content-type", "application/json")
+        //     .send()
+        //     .await
+        //     .with_context(ErrorKind::Io, || {
+        //         format!("failed to send delete request. uri: {uri}")
+        //     })?;
+        // let body = resp.text().await.with_context(ErrorKind::Io, || {
+        //     format!("failed to read response body text. uri: {uri}")
+        // })?;
+        // Ok(body)
     }
 }

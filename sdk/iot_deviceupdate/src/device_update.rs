@@ -220,13 +220,45 @@ impl DeviceUpdateClient {
         provider: &str,
         name: &str,
         version: &str,
-    ) -> azure_core::Result<String> {
+    ) -> azure_core::Result<UpdateOperation> {
         let mut uri = self.device_update_url.clone();
         let path = format!("deviceupdate/{instance_id}/updates/providers/{provider}/names/{name}/versions/{version}");
         uri.set_path(&path);
         uri.set_query(Some(API_VERSION_PARAM));
 
-        self.delete(uri.to_string()).await
+        debug!("Delete request: {}", &uri);
+        let resp_body = self.delete(uri.to_string()).await?;
+        debug!("Delete response: {}", &resp_body);
+
+        loop {
+            sleep(Duration::from_secs(5)).await;
+            let uri = self.device_update_url.clone().join(&resp_body)?;
+            debug!("Requesting operational status: {}", &uri);
+            let update_operation: UpdateOperation = self.get(uri.to_string()).await?;
+
+            match update_operation.status {
+                OperationStatus::Failed => {
+                    return Err(Error::with_message(ErrorKind::Other, {
+                        || {
+                            format!(
+                                "import unsuccessful with status failed. status: {:?}",
+                                update_operation.status
+                            )
+                        }
+                    }))
+                }
+                OperationStatus::Succeeded => return Ok(update_operation),
+                OperationStatus::NotStarted | OperationStatus::Running => continue,
+                OperationStatus::Undefined => {
+                    return Err(Error::with_message(ErrorKind::Other, || {
+                        format!(
+                            "import unsuccessful with status undefined. status: {:?}",
+                            update_operation.status
+                        )
+                    }))
+                }
+            }
+        }
     }
 
     /// Get a specific update file from the version.
