@@ -4,6 +4,7 @@ use azure_core::{
     from_json, Url,
 };
 use const_format::formatcp;
+use reqwest::RequestBuilder;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
@@ -59,6 +60,34 @@ impl DeviceUpdateClient {
             .context(ErrorKind::Credential, "get token failed")
     }
 
+    async fn request_with_operation_location(
+        &self,
+        req: RequestBuilder,
+        uri: String,
+    ) -> azure_core::Result<String> {
+        let resp = req.send().await.with_context(ErrorKind::Io, || {
+            format!("failed to send request. uri: {uri}")
+        })?;
+
+        if resp.status() == 202u16 {
+            let headers = resp.headers();
+            return match headers.get("operation-location") {
+                Some(location) => location.to_str().map(ToString::to_string).context(
+                    ErrorKind::Other,
+                    "invalid characters in operation-location path",
+                ),
+                None => Err(Error::message(
+                    ErrorKind::Other,
+                    "successful (202 status) but no operation-location header found",
+                )),
+            };
+        }
+
+        Err(Error::with_message(ErrorKind::Other, || {
+            format!("unsuccessful, status: {}", resp.status())
+        }))
+    }
+
     pub(crate) async fn get<R>(&self, uri: String) -> azure_core::Result<R>
     where
         R: DeserializeOwned,
@@ -93,27 +122,7 @@ impl DeviceUpdateClient {
             req = req.header("content-length", 0);
         }
 
-        let resp = req.send().await.with_context(ErrorKind::Io, || {
-            format!("failed to send request. uri: {uri}")
-        })?;
-
-        if resp.status() == 202u16 {
-            let headers = resp.headers();
-            return match headers.get("operation-location") {
-                Some(location) => location.to_str().map(ToString::to_string).context(
-                    ErrorKind::Other,
-                    "invalid characters in operation-location path",
-                ),
-                None => Err(Error::message(
-                    ErrorKind::Other,
-                    "successful import (202 status) but no operation-location header found",
-                )),
-            };
-        }
-
-        Err(Error::with_message(ErrorKind::Other, || {
-            format!("import unsuccessful, status: {}", resp.status())
-        }))
+        self.request_with_operation_location(req, uri).await
     }
 
     pub(crate) async fn delete(&self, uri: String) -> azure_core::Result<String> {
@@ -122,40 +131,6 @@ impl DeviceUpdateClient {
             .bearer_auth(self.get_token().await?.token.secret());
 
         req = req.header("content-type", "application/json");
-
-        let resp = req.send().await.with_context(ErrorKind::Io, || {
-            format!("failed to send request. uri: {uri}")
-        })?;
-
-        if resp.status() == 202u16 {
-            let headers = resp.headers();
-            return match headers.get("operation-location") {
-                Some(location) => location.to_str().map(ToString::to_string).context(
-                    ErrorKind::Other,
-                    "invalid characters in operation-location path",
-                ),
-                None => Err(Error::message(
-                    ErrorKind::Other,
-                    "successful import (202 status) but no operation-location header found",
-                )),
-            };
-        }
-
-        Err(Error::with_message(ErrorKind::Other, || {
-            format!("import unsuccessful, status: {}", resp.status())
-        }))
-        // let resp = reqwest::Client::new()
-        //     .delete(&uri)
-        //     .bearer_auth(self.get_token().await?.token.secret())
-        //     .header("content-type", "application/json")
-        //     .send()
-        //     .await
-        //     .with_context(ErrorKind::Io, || {
-        //         format!("failed to send delete request. uri: {uri}")
-        //     })?;
-        // let body = resp.text().await.with_context(ErrorKind::Io, || {
-        //     format!("failed to read response body text. uri: {uri}")
-        // })?;
-        // Ok(body)
+        self.request_with_operation_location(req, uri).await
     }
 }
