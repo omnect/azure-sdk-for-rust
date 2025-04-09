@@ -4,7 +4,7 @@ use azure_core::{
     from_json, Url,
 };
 use const_format::formatcp;
-use reqwest::RequestBuilder;
+use reqwest::{RequestBuilder, StatusCode};
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
@@ -63,13 +63,13 @@ impl DeviceUpdateClient {
     async fn request_with_operation_location(
         &self,
         req: RequestBuilder,
-        uri: String,
+        uri: &Url,
     ) -> azure_core::Result<String> {
         let resp = req.send().await.with_context(ErrorKind::Io, || {
             format!("failed to send request. uri: {uri}")
         })?;
 
-        if resp.status() == 202u16 {
+        if resp.status() == StatusCode::ACCEPTED {
             let headers = resp.headers();
             return match headers.get("operation-location") {
                 Some(location) => location.to_str().map(ToString::to_string).context(
@@ -109,11 +109,11 @@ impl DeviceUpdateClient {
 
     pub(crate) async fn post(
         &self,
-        uri: String,
+        uri: &Url,
         json_body: Option<String>,
     ) -> azure_core::Result<String> {
         let mut req = reqwest::Client::new()
-            .post(&uri)
+            .post(uri.as_str())
             .bearer_auth(self.get_token().await?.token.secret());
 
         if let Some(body) = json_body {
@@ -125,12 +125,12 @@ impl DeviceUpdateClient {
         self.request_with_operation_location(req, uri).await
     }
 
-    pub(crate) async fn delete(&self, uri: String) -> azure_core::Result<String> {
-        let mut req = reqwest::Client::new()
-            .delete(&uri)
-            .bearer_auth(self.get_token().await?.token.secret());
+    pub(crate) async fn delete(&self, uri: &Url) -> azure_core::Result<String> {
+        let req = reqwest::Client::new()
+            .delete(uri.as_str())
+            .bearer_auth(self.get_token().await?.token.secret())
+            .header("content-type", "application/json");
 
-        req = req.header("content-type", "application/json");
         self.request_with_operation_location(req, uri).await
     }
 }

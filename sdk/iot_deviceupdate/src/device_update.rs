@@ -165,13 +165,10 @@ pub struct UpdateList {
 }
 
 impl DeviceUpdateClient {
-    async fn check_operation_header(
-        &self,
-        resp_body: String,
-    ) -> azure_core::Result<UpdateOperation> {
+    async fn check_operation_header(&self, resp_body: &str) -> azure_core::Result<UpdateOperation> {
+        let uri = self.device_update_url.clone().join(&resp_body)?;
         loop {
             sleep(Duration::from_secs(5)).await;
-            let uri = self.device_update_url.clone().join(&resp_body)?;
             debug!("Requesting operational status: {}", &uri);
             let update_operation: UpdateOperation = self.get(uri.to_string()).await?;
 
@@ -213,10 +210,10 @@ impl DeviceUpdateClient {
         uri.set_query(Some(API_VERSION_PARAM));
 
         debug!("Import request: {}", &uri);
-        let resp_body = self.post(uri.to_string(), Some(import_json)).await?;
+        let resp_body = self.post(&uri, Some(import_json)).await?;
         debug!("Import response: {}", &resp_body);
 
-        self.check_operation_header(resp_body).await
+        self.check_operation_header(resp_body.as_str()).await
     }
 
     /// Delete a specific update version.
@@ -234,10 +231,10 @@ impl DeviceUpdateClient {
         uri.set_query(Some(API_VERSION_PARAM));
 
         debug!("Delete request: {}", &uri);
-        let resp_body = self.delete(uri.to_string()).await?;
+        let resp_body = self.delete(&uri).await?;
         debug!("Delete response: {}", &resp_body);
 
-        self.check_operation_header(resp_body).await
+        self.check_operation_header(resp_body.as_str()).await
     }
 
     /// Get a specific update file from the version.
