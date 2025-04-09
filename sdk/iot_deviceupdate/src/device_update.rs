@@ -165,6 +165,38 @@ pub struct UpdateList {
 }
 
 impl DeviceUpdateClient {
+    async fn check_operation_header(&self, resp_body: &str) -> azure_core::Result<UpdateOperation> {
+        let uri = self.device_update_url.clone().join(&resp_body)?;
+        loop {
+            sleep(Duration::from_secs(5)).await;
+            debug!("Requesting operational status: {}", &uri);
+            let update_operation: UpdateOperation = self.get(uri.to_string()).await?;
+
+            match update_operation.status {
+                OperationStatus::Failed => {
+                    return Err(Error::with_message(ErrorKind::Other, {
+                        || {
+                            format!(
+                                "unsuccessful with status failed. status: {:?}",
+                                update_operation.status
+                            )
+                        }
+                    }))
+                }
+                OperationStatus::Succeeded => return Ok(update_operation),
+                OperationStatus::NotStarted | OperationStatus::Running => continue,
+                OperationStatus::Undefined => {
+                    return Err(Error::with_message(ErrorKind::Other, || {
+                        format!(
+                            "unsuccessful with status undefined. status: {:?}",
+                            update_operation.status
+                        )
+                    }))
+                }
+            }
+        }
+    }
+
     /// Import new update version.
     /// `POST https://{endpoint}/deviceUpdate/{instanceId}/updates:import?api-version=2022-10-01`
     pub async fn import_update(
@@ -178,38 +210,10 @@ impl DeviceUpdateClient {
         uri.set_query(Some(API_VERSION_PARAM));
 
         debug!("Import request: {}", &uri);
-        let resp_body = self.post(uri.to_string(), Some(import_json)).await?;
+        let resp_body = self.post(&uri, Some(import_json)).await?;
         debug!("Import response: {}", &resp_body);
 
-        loop {
-            sleep(Duration::from_secs(5)).await;
-            let uri = self.device_update_url.clone().join(&resp_body)?;
-            debug!("Requesting operational status: {}", &uri);
-            let update_operation: UpdateOperation = self.get(uri.to_string()).await?;
-
-            match update_operation.status {
-                OperationStatus::Failed => {
-                    return Err(Error::with_message(ErrorKind::Other, {
-                        || {
-                            format!(
-                                "import unsuccessful with status failed. status: {:?}",
-                                update_operation.status
-                            )
-                        }
-                    }))
-                }
-                OperationStatus::Succeeded => return Ok(update_operation),
-                OperationStatus::NotStarted | OperationStatus::Running => continue,
-                OperationStatus::Undefined => {
-                    return Err(Error::with_message(ErrorKind::Other, || {
-                        format!(
-                            "import unsuccessful with status undefined. status: {:?}",
-                            update_operation.status
-                        )
-                    }))
-                }
-            }
-        }
+        self.check_operation_header(resp_body.as_str()).await
     }
 
     /// Delete a specific update version.
@@ -220,13 +224,17 @@ impl DeviceUpdateClient {
         provider: &str,
         name: &str,
         version: &str,
-    ) -> azure_core::Result<String> {
+    ) -> azure_core::Result<UpdateOperation> {
         let mut uri = self.device_update_url.clone();
         let path = format!("deviceupdate/{instance_id}/updates/providers/{provider}/names/{name}/versions/{version}");
         uri.set_path(&path);
         uri.set_query(Some(API_VERSION_PARAM));
 
-        self.delete(uri.to_string()).await
+        debug!("Delete request: {}", &uri);
+        let resp_body = self.delete(&uri).await?;
+        debug!("Delete response: {}", &resp_body);
+
+        self.check_operation_header(resp_body.as_str()).await
     }
 
     /// Get a specific update file from the version.
